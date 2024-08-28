@@ -11,26 +11,23 @@ shared_dir = Path("data")
 st.set_page_config(layout="wide")
 
 def load_timerange(start_date, end_date):
-    """Loads the images in the shared directory between the dates."""
+    """Generator which yields the images filenames in the shared directory between the dates."""
 
     start = int(start_date.strftime("%s"))
     end = int(end_date.strftime("%s"))
 
-    files = list(
-        filter(
-            lambda x: x.stat().st_mtime > start and x.stat().st_mtime < end,
-            sorted(shared_dir.glob("*.png"), key=lambda x: Path(x).stat().st_mtime, reverse=True)
-        )
-    )
+    # Use st_mtime (modification time) for sorting and filtering
+    sort_key = lambda x: Path(x).stat().st_mtime
+    sort_date = lambda x: x.stat().st_mtime > start and x.stat().st_mtime < end
 
-    return files
+    for fname in sorted(shared_dir.glob("*.png"), key=sort_key, reverse=True):
+
+        if not sort_date(fname):
+            continue
+
+        yield fname
 
 col1, col2 = st.columns(2)
-
-
-# Initialize session state for images
-if 'images' not in st.session_state:
-    st.session_state.images = []
 
 def load_images_from_redis():
     while r.llen('image_queue') > 0:
@@ -38,7 +35,13 @@ def load_images_from_redis():
         st.session_state.images.append(Path(image_path))
 
 with col1:
+    
+    # Initialize
     st.header("Newest Images")
+
+    # Initialize session state for images
+    if 'images' not in st.session_state:
+        st.session_state.images = []
 
     # Load new images
     load_images_from_redis()
@@ -53,31 +56,49 @@ with col1:
         st.image(img, caption=img_path.name, use_column_width="auto")
 
 with col2:
+
+    # Initialize
     st.header("Archived Images")
 
     if "archive_images" not in st.session_state:
         st.session_state.archive_images = []
 
+    # Expander and time search logic
     with st.expander("Load previous images"):
         today = datetime.datetime.now()
         prev_week = datetime.datetime(today.year, today.month, today.day - 7)
 
-        start_date, end_date = st.date_input(
-            "Set time range",
-            (prev_week, today),
-            format="YYYY.MM.DD"
-        )
+        try:
+            start_date, end_date = st.date_input(
+                "Set time range",
+                (prev_week, today),
+                format="YYYY.MM.DD"
+            )
+        except:
+            pass
 
-        if st.button("Load"):
-            st.session_state.archive_images.clear()
+        try:
+            # Load images in selected time range
+            if st.button("Load"):
 
-            for archive_image_path in load_timerange(start_date, end_date):
+                st.session_state.archive_images.clear()
 
-                st.session_state.archive_images.append(archive_image_path)
+                for archive_image_path in load_timerange(start_date, end_date):
 
-    imcols = st.columns(3)
+                    st.session_state.archive_images.append(archive_image_path)
+        except:
+            # Quick check to see if start and end date is set
+            if not 'start_date' in locals():
+                st.warning("Start date is missing!", icon='⚠️')
+            if not 'end_date' in locals():
+                st.warning("End date is missing!", icon='⚠️')
+
+
+    # Display each image in smaller columns
+    n_cols = 3
+    imcols = st.columns(n_cols)
     for i, img_path in enumerate(st.session_state.archive_images):
-        col_num = i % 3
+        col_num = i % n_cols
 
         with imcols[col_num]:
             img = Image.open(img_path)
